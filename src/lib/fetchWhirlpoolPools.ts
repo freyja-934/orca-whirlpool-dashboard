@@ -1,5 +1,9 @@
-import { PriceMath } from "@orca-so/whirlpools-sdk";
-import { TokenInfo, TokenListProvider } from "@solana/spl-token-registry";
+import {
+  fetchPositionsForOwner,
+  setWhirlpoolsConfig,
+} from "@orca-so/whirlpools";
+import { address, createSolanaRpc } from "@solana/kit";
+import { TokenInfo } from "@solana/spl-token-registry";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { Decimal } from "decimal.js";
 import { getWhirlpoolClient } from "./orcaClient";
@@ -13,116 +17,175 @@ export interface PoolInfo {
   feeRate: number;
   tickSpacing: number;
   liquidity: string;
+  volume24h?: number;
+  fees24h?: number;
+  apr?: number;
 }
 
-let tokenList: TokenInfo[] | null = null;
-const tokenCache: Map<string, TokenInfo> = new Map();
-
-async function getTokenList(): Promise<TokenInfo[]> {
-  if (!tokenList) {
-    const provider = new TokenListProvider();
-    const tokens = await provider.resolve();
-    tokenList = tokens.filterByClusterSlug("mainnet-beta").getList();
-  }
-  return tokenList || [];
+export interface PositionInfo {
+  mint: PublicKey;
+  bundleIndex?: number;
+  data: {
+    liquidity: string | number;
+    tickLowerIndex: number;
+    tickUpperIndex: number;
+    feeGrowthInsideA: Uint8Array;
+    feeGrowthInsideB: Uint8Array;
+    feeOwedA: number;
+    feeOwedB: number;
+    rewardInfos: Array<{ growthInsideCheckpoint: string; amountOwed: string }>;
+    whirlpool: PublicKey;
+    positionMint: PublicKey;
+    pool: unknown;
+    tokenA: TokenInfo;
+    tokenB: TokenInfo;
+    positionValueUSD?: number;
+  };
 }
 
-// Fetch token metadata directly from the blockchain
-async function fetchTokenMetadata(
-  connection: Connection,
-  mintAddress: string
-): Promise<TokenInfo> {
-  // Check cache first
-  if (tokenCache.has(mintAddress)) {
-    return tokenCache.get(mintAddress)!;
-  }
+interface OrcaPoolData {
+  address: string;
+  tokenA: {
+    address: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    imageUrl?: string;
+  };
+  tokenB: {
+    address: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    imageUrl?: string;
+  };
+  price: string;
+  tvlUsdc: string;
+  feeRate: number;
+  tickSpacing: number;
+  liquidity: string;
+  stats?: {
+    "24h": {
+      volume: string;
+      fees: string;
+      yieldOverTvl: string;
+    };
+  };
+}
 
+export async function fetchPoolsWithDetails(connection: Connection, limit: number = 50): Promise<PoolInfo[]> {
   try {
-    const mintPubkey = new PublicKey(mintAddress);
+    const response = await fetch(`https://api.orca.so/v2/solana/pools?limit=${limit}`);
     
-    // First, get the mint info for decimals
-    const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
-    let decimals = 6; // Default decimals
-    
-    if (mintInfo.value && "parsed" in mintInfo.value.data) {
-      const parsedData = mintInfo.value.data.parsed;
-      decimals = parsedData.info.decimals;
+    if (!response.ok) {
+      throw new Error(`Failed to fetch pools: ${response.statusText}`);
     }
     
-    // Try to get Metaplex metadata
-    // The metadata PDA is derived from the mint address
-    const METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
-    const [metadataPDA] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from('metadata'),
-        METADATA_PROGRAM_ID.toBuffer(),
-        mintPubkey.toBuffer(),
-      ],
-      METADATA_PROGRAM_ID
-    );
+    const data = await response.json();
+    const pools: OrcaPoolData[] = data.data;
     
-    let symbol = mintAddress.slice(0, 8);
-    let name = `Token ${mintAddress.slice(0, 8)}`;
+    return pools.map((pool) => {
+      const tokenA: TokenInfo = {
+        chainId: 101,
+        address: pool.tokenA.address,
+        symbol: pool.tokenA.symbol,
+        name: pool.tokenA.name,
+        decimals: pool.tokenA.decimals,
+        logoURI: pool.tokenA.imageUrl || "",
+        tags: [],
+      };
+      
+      const tokenB: TokenInfo = {
+        chainId: 101,
+        address: pool.tokenB.address,
+        symbol: pool.tokenB.symbol,
+        name: pool.tokenB.name,
+        decimals: pool.tokenB.decimals,
+        logoURI: pool.tokenB.imageUrl || "",
+        tags: [],
+      };
+      
+      const tvl = parseFloat(pool.tvlUsdc);
+      const volume24h = pool.stats?.["24h"]?.volume ? parseFloat(pool.stats["24h"].volume) : undefined;
+      const fees24h = pool.stats?.["24h"]?.fees ? parseFloat(pool.stats["24h"].fees) : undefined;
+      const apr = pool.stats?.["24h"]?.yieldOverTvl ? parseFloat(pool.stats["24h"].yieldOverTvl) * 365 * 100 : undefined;
+      
+      return {
+        address: new PublicKey(pool.address),
+        tokenA,
+        tokenB,
+        price: new Decimal(pool.price),
+        tvl,
+        feeRate: pool.feeRate,
+        tickSpacing: pool.tickSpacing,
+        liquidity: pool.liquidity,
+        volume24h,
+        fees24h,
+        apr,
+      };
+    });
+  } catch (error) {
+    console.error("Error fetching pools from Orca API:", error);
+    return [];
+  }
+}
+
+export async function fetchPoolDetails(
+  connection: Connection,
+  poolAddress: string
+): Promise<PoolInfo | null> {
+  try {
+    const response = await fetch(`https://api.orca.so/v2/solana/pools/${poolAddress}`);
     
-    try {
-      const metadataAccount = await connection.getAccountInfo(metadataPDA);
-      if (metadataAccount) {
-        // Parse metadata - this is a simplified version
-        // In production, you'd use @metaplex-foundation/mpl-token-metadata
-        const data = metadataAccount.data;
-        
-        // Skip the discriminator and other fields to get to the name
-        // This is a rough parse - ideally use the Metaplex SDK
-        let offset = 1 + 32 + 32; // discriminator + update auth + mint
-        const nameLength = data.readUInt32LE(offset);
-        offset += 4;
-        const nameBytes = data.slice(offset, offset + nameLength);
-        const tokenName = nameBytes.toString('utf8').replace(/\0/g, '').trim();
-        
-        offset += 32; // max name length
-        const symbolLength = data.readUInt32LE(offset);
-        offset += 4;
-        const symbolBytes = data.slice(offset, offset + symbolLength);
-        const tokenSymbol = symbolBytes.toString('utf8').replace(/\0/g, '').trim();
-        
-        if (tokenName) name = tokenName;
-        if (tokenSymbol) symbol = tokenSymbol;
-      }
-    } catch (metadataError) {
-      console.log(`Could not parse metadata for ${mintAddress}, using defaults`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch pool details: ${response.statusText}`);
     }
     
-    const tokenInfo: TokenInfo = {
-      chainId: 101, // Solana mainnet
-      address: mintAddress,
-      symbol: symbol,
-      name: name,
-      decimals: decimals,
-      logoURI: undefined,
+    const responseData = await response.json();
+    const pool: OrcaPoolData = responseData.data;
+    
+    const tokenA: TokenInfo = {
+      chainId: 101,
+      address: pool.tokenA.address,
+      symbol: pool.tokenA.symbol,
+      name: pool.tokenA.name,
+      decimals: pool.tokenA.decimals,
+      logoURI: pool.tokenA.imageUrl || "",
       tags: [],
-      extensions: {}
     };
     
-    tokenCache.set(mintAddress, tokenInfo);
-    return tokenInfo;
+    const tokenB: TokenInfo = {
+      chainId: 101,
+      address: pool.tokenB.address,
+      symbol: pool.tokenB.symbol,
+      name: pool.tokenB.name,
+      decimals: pool.tokenB.decimals,
+      logoURI: pool.tokenB.imageUrl || "",
+      tags: [],
+    };
+    
+    const tvl = parseFloat(pool.tvlUsdc);
+    const volume24h = pool.stats?.["24h"]?.volume ? parseFloat(pool.stats["24h"].volume) : undefined;
+    const fees24h = pool.stats?.["24h"]?.fees ? parseFloat(pool.stats["24h"].fees) : undefined;
+    const apr = pool.stats?.["24h"]?.yieldOverTvl ? parseFloat(pool.stats["24h"].yieldOverTvl) * 365 * 100 : undefined;
+    
+    return {
+      address: new PublicKey(pool.address),
+      tokenA,
+      tokenB,
+      price: new Decimal(pool.price),
+      tvl,
+      feeRate: pool.feeRate,
+      tickSpacing: pool.tickSpacing,
+      liquidity: pool.liquidity,
+      volume24h,
+      fees24h,
+      apr,
+    };
   } catch (error) {
-    console.error(`Error fetching metadata for ${mintAddress}:`, error);
+    console.error("Error fetching pool details from Orca API:", error);
+    return null;
   }
-  
-  // Fallback token info
-  const fallbackToken: TokenInfo = {
-    chainId: 101,
-    address: mintAddress,
-    symbol: mintAddress.slice(0, 8),
-    name: `Token ${mintAddress.slice(0, 8)}`,
-    decimals: 6, // Default to 6 decimals
-    logoURI: undefined,
-    tags: [],
-    extensions: {}
-  };
-  
-  tokenCache.set(mintAddress, fallbackToken);
-  return fallbackToken;
 }
 
 export async function fetchUserPositions(
@@ -130,157 +193,179 @@ export async function fetchUserPositions(
   walletAddress: PublicKey
 ) {
   try {
-    const client = getWhirlpoolClient(connection);
-    const accounts = await connection.getParsedTokenAccountsByOwner(
-      walletAddress,
-      {
-        programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
-      }
-    );
-
-    const positionMintAddresses = accounts.value
-      .filter((account) => {
-        const mintInfo = account.account.data.parsed.info;
-        return mintInfo.tokenAmount.decimals === 0 && mintInfo.tokenAmount.uiAmount === 1;
-      })
-      .map((account) => new PublicKey(account.account.data.parsed.info.mint));
-
+    console.log("Fetching positions for wallet:", walletAddress.toString());
+    
+    setWhirlpoolsConfig("solanaMainnet");
+    
+    const rpc = createSolanaRpc(connection.rpcEndpoint);
+    const ownerAddr = address(walletAddress.toString());
+    const sdkPositions = await fetchPositionsForOwner(rpc, ownerAddr);
+    
+    console.log(`Found ${sdkPositions.length} positions`);
+    
     const positions = [];
-    for (const mintAddress of positionMintAddresses) {
+    
+    for (const sdkPosition of sdkPositions) {
       try {
-        const position = await client.fetcher.getPosition(mintAddress);
-        if (position) {
-          const whirlpool = await client.fetcher.getPool(position.whirlpool);
-          if (whirlpool) {
-            positions.push({
-              mint: mintAddress,
-              data: {
-                ...position,
-                pool: whirlpool,
-              },
-            });
+        if (sdkPosition.isPositionBundle) {
+          console.log("Skipping position bundle (not yet supported)");
+          continue;
+        }
+        
+        const positionData = sdkPosition.data as unknown;
+        const positionAddress = sdkPosition.address;
+        
+        const legacyClient = getWhirlpoolClient(connection);
+        const whirlpoolAddress = new PublicKey((positionData as any).whirlpool);
+        const pool = await legacyClient.fetcher.getPool(whirlpoolAddress);
+        
+        if (pool) {
+          const poolDetailsResponse = await fetch(`https://api.orca.so/v2/solana/pools/${whirlpoolAddress.toString()}`);
+          let tokenA: TokenInfo;
+          let tokenB: TokenInfo;
+          
+          let poolData: OrcaPoolData | null = null;
+          
+          if (poolDetailsResponse.ok) {
+            const response = await poolDetailsResponse.json();
+            console.log('Pool data from Orca API:', response);
+            poolData = response.data as OrcaPoolData;
+            
+            if (!poolData || !poolData.tokenA || !poolData.tokenB) {
+              console.error('Invalid pool data structure:', response);
+              // Fallback to basic token info
+              tokenA = {
+                chainId: 101,
+                address: pool.tokenMintA.toString(),
+                symbol: `${pool.tokenMintA.toString().slice(0, 4)}...`,
+                name: "Unknown Token",
+                decimals: 6,
+                logoURI: "",
+                tags: [],
+              };
+              tokenB = {
+                chainId: 101,
+                address: pool.tokenMintB.toString(),
+                symbol: `${pool.tokenMintB.toString().slice(0, 4)}...`,
+                name: "Unknown Token",
+                decimals: 6,
+                logoURI: "",
+                tags: [],
+              };
+            } else {
+              tokenA = {
+                chainId: 101,
+                address: poolData.tokenA.address,
+                symbol: poolData.tokenA.symbol,
+                name: poolData.tokenA.name,
+                decimals: poolData.tokenA.decimals,
+                logoURI: poolData.tokenA.imageUrl || "",
+                tags: [],
+              };
+              tokenB = {
+                chainId: 101,
+                address: poolData.tokenB.address,
+                symbol: poolData.tokenB.symbol,
+                name: poolData.tokenB.name,
+                decimals: poolData.tokenB.decimals,
+                logoURI: poolData.tokenB.imageUrl || "",
+                tags: [],
+              };
+            }
+          } else {
+            tokenA = {
+              chainId: 101,
+              address: pool.tokenMintA.toString(),
+              symbol: `${pool.tokenMintA.toString().slice(0, 4)}...`,
+              name: "Unknown Token",
+              decimals: 6,
+              logoURI: "",
+              tags: [],
+            };
+            tokenB = {
+              chainId: 101,
+              address: pool.tokenMintB.toString(),
+              symbol: `${pool.tokenMintB.toString().slice(0, 4)}...`,
+              name: "Unknown Token",
+              decimals: 6,
+              logoURI: "",
+              tags: [],
+            };
           }
+          
+                      console.log(`Position: ${tokenA.symbol}/${tokenB.symbol}`);
+          
+          const positionMint = new PublicKey(positionAddress);
+          
+          // Calculate position value in USD
+          let positionValueUSD: number | undefined;
+          if (poolDetailsResponse.ok && poolData) {
+            // Get position liquidity from the actual position data
+            const positionLiquidityBN = (positionData as any).liquidity;
+            const positionLiquidity = typeof positionLiquidityBN === 'string' 
+              ? parseFloat(positionLiquidityBN) 
+              : parseFloat(positionLiquidityBN.toString());
+            
+            // Get pool liquidity from the pool data (not from API which might be in different units)
+            const poolLiquidityBN = pool.liquidity;
+            const poolLiquidity = typeof poolLiquidityBN === 'string'
+              ? parseFloat(poolLiquidityBN)
+              : parseFloat(poolLiquidityBN.toString());
+            
+            // Check if position is in range
+            const tickLower = (positionData as any).tickLowerIndex;
+            const tickUpper = (positionData as any).tickUpperIndex;
+            const currentTick = pool.tickCurrentIndex;
+            const isInRange = currentTick >= tickLower && currentTick <= tickUpper;
+            
+
+            
+            // For concentrated liquidity positions, we need to calculate actual token amounts
+            // The simple liquidity proportion method is not accurate for concentrated liquidity
+            
+            const poolTVL = parseFloat(poolData.tvlUsdc || "0");
+            
+            // For now, use simplified calculation
+            // TODO: Implement proper concentrated liquidity math to calculate actual token amounts
+            if (poolLiquidity > 0) {
+              positionValueUSD = (positionLiquidity / poolLiquidity) * poolTVL;
+            }
+          }
+          
+          positions.push({
+            mint: positionMint,
+            data: {
+              liquidity: (positionData as any).liquidity,
+              tickLowerIndex: (positionData as any).tickLowerIndex,
+              tickUpperIndex: (positionData as any).tickUpperIndex,
+              feeGrowthInsideA: (positionData as any).feeGrowthInsideCheckpointA || new Uint8Array(32),
+              feeGrowthInsideB: (positionData as any).feeGrowthInsideCheckpointB || new Uint8Array(32),
+              feeOwedA: (positionData as any).tokenOwedA || 0,
+              feeOwedB: (positionData as any).tokenOwedB || 0,
+              rewardInfos: (positionData as any).rewardInfos || [],
+              whirlpool: new PublicKey((positionData as any).whirlpool),
+              positionMint: positionMint,
+              pool: {
+                ...pool,
+                address: whirlpoolAddress,
+              },
+              tokenA,
+              tokenB,
+              positionValueUSD,
+            },
+          });
         }
       } catch (error) {
+        console.error("Error processing position:", error);
         continue;
       }
     }
-
+    
+    console.log(`Total positions processed: ${positions.length}`);
     return positions;
+    
   } catch (error) {
     console.error("Error fetching user positions:", error);
     return [];
-  }
-}
-
-export async function fetchPoolsWithDetails(
-  connection: Connection,
-  limit: number = 50
-): Promise<PoolInfo[]> {
-  try {
-    const client = getWhirlpoolClient(connection);
-    const whirlpools = await client.program.account.whirlpool.all();
-    const tokens = await getTokenList();
-    
-    const poolsWithDetails = await Promise.all(
-      whirlpools.slice(0, limit).map(async (pool) => {
-        try {
-          const poolData = pool.account;
-          
-          // Debug logging
-          const tokenMintAStr = poolData.tokenMintA.toString();
-          const tokenMintBStr = poolData.tokenMintB.toString();
-          
-          let tokenA = tokens.find(
-            (t) => t.address === tokenMintAStr
-          );
-          let tokenB = tokens.find(
-            (t) => t.address === tokenMintBStr
-          );
-          
-          // If tokens are not found in registry, fetch metadata from blockchain
-          if (!tokenA) {
-            tokenA = await fetchTokenMetadata(connection, tokenMintAStr);
-          }
-          if (!tokenB) {
-            tokenB = await fetchTokenMetadata(connection, tokenMintBStr);
-          }
-
-          const price = PriceMath.sqrtPriceX64ToPrice(
-            poolData.sqrtPrice,
-            tokenA.decimals,
-            tokenB.decimals
-          );
-
-          return {
-            address: pool.publicKey,
-            tokenA: tokenA,
-            tokenB: tokenB,
-            price,
-            tvl: 0,
-            feeRate: poolData.feeRate,
-            tickSpacing: poolData.tickSpacing,
-            liquidity: poolData.liquidity.toString(),
-          };
-        } catch (error) {
-          console.error(`Error processing pool ${pool.publicKey.toString()}:`, error);
-          return null;
-        }
-      })
-    );
-
-    return poolsWithDetails.filter((pool): pool is PoolInfo => pool !== null);
-  } catch (error) {
-    console.error("Error fetching pools with details:", error);
-    return [];
-  }
-}
-
-export async function fetchPoolDetails(
-  connection: Connection,
-  poolAddress: PublicKey
-) {
-  try {
-    const client = getWhirlpoolClient(connection);
-    const pool = await client.fetcher.getPool(poolAddress);
-    
-    if (!pool) {
-      return null;
-    }
-
-    const tokens = await getTokenList();
-    const tokenMintAStr = pool.tokenMintA.toString();
-    const tokenMintBStr = pool.tokenMintB.toString();
-    
-    let tokenA = tokens.find(
-      (t) => t.address === tokenMintAStr
-    );
-    let tokenB = tokens.find(
-      (t) => t.address === tokenMintBStr
-    );
-    
-    // If tokens are not found in registry, fetch metadata from blockchain
-    if (!tokenA) {
-      tokenA = await fetchTokenMetadata(connection, tokenMintAStr);
-    }
-    if (!tokenB) {
-      tokenB = await fetchTokenMetadata(connection, tokenMintBStr);
-    }
-
-    const price = PriceMath.sqrtPriceX64ToPrice(
-      pool.sqrtPrice,
-      tokenA.decimals,
-      tokenB.decimals
-    );
-
-    return {
-      ...pool,
-      tokenA,
-      tokenB,
-      price,
-    };
-  } catch (error) {
-    console.error("Error fetching pool details:", error);
-    return null;
   }
 } 

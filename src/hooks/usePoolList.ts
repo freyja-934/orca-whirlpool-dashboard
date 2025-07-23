@@ -13,13 +13,13 @@ export function usePoolList(filters?: { search?: string; sortBy?: string }) {
   const query = useQuery({
     queryKey: queryKeys.pools.list(filters),
     queryFn: async () => {
-      return fetchPoolsWithDetails(connection, 100);
+      return fetchPoolsWithDetails(connection);
     },
     enabled: !!connection,
     staleTime: 60000,
     gcTime: 5 * 60 * 1000,
   });
-
+console.log(query.data)
   const filteredPools = useMemo(() => {
     if (!query.data) return [];
     

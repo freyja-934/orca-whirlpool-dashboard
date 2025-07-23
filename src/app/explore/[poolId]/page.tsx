@@ -37,7 +37,7 @@ export default function PoolDetailPage() {
     const liquidityDistribution = generateLiquidityDistribution(
       currentPrice,
       pool.tickSpacing,
-      pool.tickCurrentIndex
+      0 // tickCurrentIndex not available from API
     );
 
     // Combine TVL and volume data
@@ -54,6 +54,19 @@ export default function PoolDetailPage() {
     };
   }, [pool]);
 
+  const stats = useMemo(() => {
+    if (!pool) return null;
+    
+    return {
+      price: pool.price.toFixed(6),
+      tvl: pool.tvl,
+      volume24h: pool.volume24h || 0,
+      fees24h: pool.fees24h || 0,
+      apr: pool.apr || 0,
+      liquidity: pool.liquidity,
+      feeRate: pool.feeRate / 10000,
+    };
+  }, [pool]);
 
 
   if (isLoading) {
@@ -129,20 +142,11 @@ export default function PoolDetailPage() {
   const tokenBSymbol = pool.tokenB?.symbol || "Token B";
   const feePercent = (pool.feeRate / 10000).toFixed(2);
 
-  // Calculate liquidity value (simplified - in production would need actual token prices)
-  const liquidityNum = parseFloat(pool.liquidity.toString());
-  const liquidityUSD = liquidityNum / 1e6; // Simplified conversion
-
-  // Calculate TVL from liquidity (rough estimate)
-  const tvl = liquidityUSD * pool.price.toNumber() * 0.5; // Simplified calculation
-
-  // Get latest volume from chart data
-  const latestVolume = chartData?.tvlVolumeData[chartData.tvlVolumeData.length - 1]?.volume || 0;
-
-  // Calculate APR based on fees and volume (simplified)
-  const dailyFees = latestVolume * (pool.feeRate / 1000000); // fee in basis points
-  const annualizedFees = dailyFees * 365;
-  const apr = tvl > 0 ? (annualizedFees / tvl) * 100 : 0;
+  // Use real data from API
+  const tvl = pool.tvl || 0;
+  const volume24h = pool.volume24h || 0;
+  const apr = pool.apr || 0;
+  const fees24h = pool.fees24h || 0;
 
   return (
     <Container className="py-8">
@@ -180,7 +184,7 @@ export default function PoolDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {formatNumber(latestVolume)}
+                {formatNumber(volume24h)}
               </div>
               <p className="text-xs text-muted-foreground">Trading volume</p>
             </CardContent>
@@ -206,7 +210,7 @@ export default function PoolDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {formatNumber(liquidityUSD)}
+                {formatNumber(parseFloat(pool.liquidity) / 1e15)}Q
               </div>
               <p className="text-xs text-muted-foreground">Active liquidity</p>
             </CardContent>
@@ -296,12 +300,12 @@ export default function PoolDetailPage() {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <CardTitle>Pool Information</CardTitle>
                 <CardDescription>Detailed pool statistics and parameters</CardDescription>
               </div>
-              <Button asChild>
+              <Button asChild className="w-full sm:w-auto">
                 <Link href={`/explore/${poolId}/add-liquidity`}>
                   Add Liquidity
                 </Link>
@@ -311,17 +315,19 @@ export default function PoolDetailPage() {
           <CardContent>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Pool Address</span>
-                  <span className="font-mono text-sm">{poolId.slice(0, 8)}...{poolId.slice(-8)}</span>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-muted-foreground text-sm">Pool Address</span>
+                  <span className="font-mono text-xs truncate max-w-[150px]" title={poolId}>
+                    {poolId.slice(0, 8)}...{poolId.slice(-8)}
+                  </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Token A</span>
-                  <span>{tokenASymbol}</span>
+                  <span className="text-muted-foreground text-sm">Token A</span>
+                  <span className="text-sm">{tokenASymbol}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Token B</span>
-                  <span>{tokenBSymbol}</span>
+                  <span className="text-muted-foreground text-sm">Token B</span>
+                  <span className="text-sm">{tokenBSymbol}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Fee Rate</span>
@@ -333,18 +339,12 @@ export default function PoolDetailPage() {
                   <span className="text-muted-foreground">Tick Spacing</span>
                   <span>{pool.tickSpacing}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Current Tick</span>
-                  <span>{pool.tickCurrentIndex.toLocaleString()}</span>
-                </div>
+                {/* Current tick not available from API */}
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Current Price</span>
                   <span>{pool.price.toFixed(4)} {tokenBSymbol} per {tokenASymbol}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">sqrt Price X64</span>
-                  <span className="font-mono text-xs">{pool.sqrtPrice.toString().slice(0, 12)}...</span>
-                </div>
+                {/* sqrt Price not available from API */}
               </div>
             </div>
           </CardContent>

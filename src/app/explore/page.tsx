@@ -43,25 +43,25 @@ export default function ExplorePage() {
 
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <Input
-              placeholder="Search by token name or address..."
+              type="search"
+              placeholder="Search pools..."
               value={searchQuery}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
-              className="pl-9"
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 w-full"
             />
           </div>
-          <div className="flex gap-2">
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="px-3 py-2 rounded-md border border-input bg-background text-sm"
-            >
-              <option value="tvl">Sort by TVL</option>
-              <option value="feeRate">Sort by Fee</option>
-              <option value="liquidity">Sort by Liquidity</option>
-            </select>
-          </div>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="w-full sm:w-auto rounded-md border border-input bg-background px-4 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+          >
+            <option value="">Sort by...</option>
+            <option value="tvl">Sort by TVL</option>
+            <option value="feeRate">Sort by Fee</option>
+            <option value="liquidity">Sort by Liquidity</option>
+          </select>
         </div>
 
         {isLoading ? (

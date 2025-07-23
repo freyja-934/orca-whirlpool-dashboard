@@ -21,7 +21,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={`${inter.variable} dark`}>
       <body className="min-h-screen bg-background font-sans antialiased">
         <QueryProvider>
           <SolanaWalletProvider>
