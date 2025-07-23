@@ -73,6 +73,18 @@ interface OrcaPoolData {
   };
 }
 
+interface PositionData {
+  whirlpool: string;
+  liquidity: string | number | bigint;
+  tickLowerIndex: number;
+  tickUpperIndex: number;
+  feeGrowthInsideCheckpointA?: Uint8Array;
+  feeGrowthInsideCheckpointB?: Uint8Array;
+  tokenOwedA?: number;
+  tokenOwedB?: number;
+  rewardInfos?: Array<{ growthInsideCheckpoint: string; amountOwed: string }>;
+}
+
 export async function fetchPoolsWithDetails(connection: Connection, limit: number = 50): Promise<PoolInfo[]> {
   try {
     const response = await fetch(`https://api.orca.so/v2/solana/pools?limit=${limit}`);
@@ -212,11 +224,11 @@ export async function fetchUserPositions(
           continue;
         }
         
-        const positionData = sdkPosition.data as unknown;
+        const positionData = sdkPosition.data as unknown as PositionData;
         const positionAddress = sdkPosition.address;
         
         const legacyClient = getWhirlpoolClient(connection);
-        const whirlpoolAddress = new PublicKey((positionData as any).whirlpool);
+        const whirlpoolAddress = new PublicKey(positionData.whirlpool);
         const pool = await legacyClient.fetcher.getPool(whirlpoolAddress);
         
         if (pool) {
@@ -301,7 +313,7 @@ export async function fetchUserPositions(
           let positionValueUSD: number | undefined;
           if (poolDetailsResponse.ok && poolData) {
             // Get position liquidity from the actual position data
-            const positionLiquidityBN = (positionData as any).liquidity;
+            const positionLiquidityBN = positionData.liquidity;
             const positionLiquidity = typeof positionLiquidityBN === 'string' 
               ? parseFloat(positionLiquidityBN) 
               : parseFloat(positionLiquidityBN.toString());
@@ -313,12 +325,16 @@ export async function fetchUserPositions(
               : parseFloat(poolLiquidityBN.toString());
             
             // Check if position is in range
-            const tickLower = (positionData as any).tickLowerIndex;
-            const tickUpper = (positionData as any).tickUpperIndex;
+            const tickLower = positionData.tickLowerIndex;
+            const tickUpper = positionData.tickUpperIndex;
             const currentTick = pool.tickCurrentIndex;
             const isInRange = currentTick >= tickLower && currentTick <= tickUpper;
             
-
+            if (isInRange) {
+              console.log(`Position in range: tickLower=${tickLower}, tickUpper=${tickUpper}, currentTick=${currentTick}`);
+            } else {
+              console.log(`Position out of range: tickLower=${tickLower}, tickUpper=${tickUpper}, currentTick=${currentTick}`);
+            }
             
             // For concentrated liquidity positions, we need to calculate actual token amounts
             // The simple liquidity proportion method is not accurate for concentrated liquidity
@@ -335,15 +351,15 @@ export async function fetchUserPositions(
           positions.push({
             mint: positionMint,
             data: {
-              liquidity: (positionData as any).liquidity,
-              tickLowerIndex: (positionData as any).tickLowerIndex,
-              tickUpperIndex: (positionData as any).tickUpperIndex,
-              feeGrowthInsideA: (positionData as any).feeGrowthInsideCheckpointA || new Uint8Array(32),
-              feeGrowthInsideB: (positionData as any).feeGrowthInsideCheckpointB || new Uint8Array(32),
-              feeOwedA: (positionData as any).tokenOwedA || 0,
-              feeOwedB: (positionData as any).tokenOwedB || 0,
-              rewardInfos: (positionData as any).rewardInfos || [],
-              whirlpool: new PublicKey((positionData as any).whirlpool),
+              liquidity: positionData.liquidity,
+              tickLowerIndex: positionData.tickLowerIndex,
+              tickUpperIndex: positionData.tickUpperIndex,
+              feeGrowthInsideA: positionData.feeGrowthInsideCheckpointA || new Uint8Array(32),
+              feeGrowthInsideB: positionData.feeGrowthInsideCheckpointB || new Uint8Array(32),
+              feeOwedA: positionData.tokenOwedA || 0,
+              feeOwedB: positionData.tokenOwedB || 0,
+              rewardInfos: positionData.rewardInfos || [],
+              whirlpool: new PublicKey(positionData.whirlpool),
               positionMint: positionMint,
               pool: {
                 ...pool,

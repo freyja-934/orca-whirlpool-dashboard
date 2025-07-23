@@ -8,9 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePoolDetails } from "@/hooks/usePoolDetails";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
-import { useWallet } from "@/hooks/useWallet";
 import { addLiquidity } from "@/lib/liquidityService";
 import { getFullRangeTicks, priceRangeToTicks } from "@/lib/priceUtils";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import Decimal from "decimal.js";
 import { AlertCircle, ArrowLeft, Info, Plus } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -29,14 +30,19 @@ export default function AddLiquidityPage() {
   const params = useParams();
   const router = useRouter();
   const poolId = params.poolId as string;
-  const { pool, isLoading } = usePoolDetails(poolId);
-  const { isConnected, publicKey, wallet, connection } = useWallet();
+
+  const wallet = useWallet();
+  const { connection } = useConnection();
+  const { pool, isLoading, error } = usePoolDetails(poolId);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [rangeType, setRangeType] = useState<"full" | "custom">("full");
   const [txStatus, setTxStatus] = useState<"idle" | "creating" | "signing" | "confirming" | "success" | "error">("idle");
   const [txError, setTxError] = useState<string | null>(null);
   const [slippageTolerance, setSlippageTolerance] = useState(0.01); // 1% default
   const [showSlippageSettings, setShowSlippageSettings] = useState(false);
+  const [liquidityAmount, setLiquidityAmount] = useState("");
+  const [tokenAAmount, setTokenAAmount] = useState("");
+  const [tokenBAmount, setTokenBAmount] = useState("");
 
   const {
     register,
@@ -53,8 +59,19 @@ export default function AddLiquidityPage() {
     },
   });
 
-  const tokenAAmount = watch("tokenAAmount");
-  const tokenBAmount = watch("tokenBAmount");
+  const handleLiquidityAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = parseFloat(e.target.value) || 0;
+    setLiquidityAmount(value.toString());
+    
+    if (pool) {
+      const priceDecimal = new Decimal(pool.price.toString());
+      const tokenAAmount = value / Math.sqrt(priceDecimal.toNumber());
+      const tokenBAmount = value * Math.sqrt(priceDecimal.toNumber());
+      
+      setTokenAAmount(tokenAAmount.toFixed(6));
+      setTokenBAmount(tokenBAmount.toFixed(6));
+    }
+  };
 
   // Fetch token balances
   const tokenABalance = useTokenBalance(pool?.tokenA.address);
@@ -97,7 +114,7 @@ export default function AddLiquidityPage() {
   }, [txStatus, router]);
 
   const onSubmit = async (data: FormData) => {
-    if (!isConnected || !publicKey || !pool) return;
+    if (!wallet.connected || !pool) return;
 
     setIsSubmitting(true);
     setTxStatus("creating");
@@ -115,7 +132,7 @@ export default function AddLiquidityPage() {
           );
 
       // Call the liquidity service
-      const result = await addLiquidity(connection, wallet as any, {
+      const result = await addLiquidity(connection, wallet, {
         poolAddress: poolId,
         tokenAAmount: data.tokenAAmount,
         tokenBAmount: data.tokenBAmount,
@@ -231,7 +248,7 @@ export default function AddLiquidityPage() {
         </p>
       </div>
 
-      {!isConnected && (
+      {!wallet.connected && (
         <Card className="mb-6 border-yellow-600/20 bg-yellow-600/5">
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 text-yellow-600">
@@ -593,7 +610,7 @@ export default function AddLiquidityPage() {
           type="submit"
           size="lg"
           className="w-full"
-          disabled={!isConnected || isSubmitting}
+          disabled={!wallet.connected || isSubmitting}
         >
           {isSubmitting ? (
             "Adding Liquidity..."

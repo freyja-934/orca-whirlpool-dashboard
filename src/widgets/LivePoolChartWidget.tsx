@@ -5,18 +5,20 @@ import { formatNumber, generateVolumeHistory } from '@/lib/chartData';
 import { CandlestickChart, LineChart } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
-    Area,
-    Bar,
-    CartesianGrid,
-    ComposedChart,
-    Line,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis
+  Area,
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
 } from 'recharts';
 
 interface ChartConfig {
+  selectedTokens?: string[];
+  sortBy?: string;
   selectedPair?: string;
   chartType?: 'candlestick' | 'line';
   overlays?: {
@@ -25,6 +27,7 @@ interface ChartConfig {
     volume: boolean;
     volatility: boolean;
   };
+  [key: string]: unknown;
 }
 
 interface LivePoolChartWidgetProps {

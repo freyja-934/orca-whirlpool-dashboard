@@ -25,7 +25,7 @@ export default function WidgetContainer() {
         const widgetProps = (type === 'priceFeed' || type === 'livePoolChart') ? {
           widgetId: id,
           config,
-          onConfigUpdate: (newConfig: any) => updateWidgetConfig(id, newConfig)
+          onConfigUpdate: (newConfig: Record<string, unknown>) => updateWidgetConfig(id, newConfig)
         } : undefined;
         
         return (

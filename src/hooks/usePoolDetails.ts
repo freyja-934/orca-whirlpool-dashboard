@@ -14,7 +14,7 @@ export function usePoolDetails(poolId: string) {
       
       try {
         const poolAddress = new PublicKey(poolId);
-        return fetchPoolDetails(connection, poolAddress);
+        return fetchPoolDetails(connection, poolAddress.toString());
       } catch (error) {
         console.error("Invalid pool address:", error);
         return null;
