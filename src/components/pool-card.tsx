@@ -13,7 +13,7 @@ export function PoolCard({ pool }: PoolCardProps) {
   const tokenBSymbol = pool.tokenB?.symbol || "???";
   const feePercent = (pool.feeRate / 10000).toFixed(2);
   const apr = Math.random() * 50;
-
+console.log(pool)
   return (
     <Link href={`/explore/${pool.address.toString()}`}>
       <Card className="cursor-pointer hover:shadow-lg transition-all hover:scale-[1.02]">

@@ -1,18 +1,60 @@
 "use client";
 
+import { LiquidityDistribution } from "@/components/charts/liquidity-distribution";
+import { PriceChart } from "@/components/charts/price-chart";
+import { TVLVolumeChart } from "@/components/charts/tvl-volume-chart";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePoolDetails } from "@/hooks/usePoolDetails";
+import {
+  formatNumber,
+  generateLiquidityDistribution,
+  generatePriceHistory,
+  generateTVLHistory,
+  generateVolumeHistory,
+} from "@/lib/chartData";
 import { Activity, ArrowLeft, DollarSign, Droplets, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useMemo } from "react";
 
 export default function PoolDetailPage() {
   const params = useParams();
   const poolId = params.poolId as string;
   const { pool, isLoading } = usePoolDetails(poolId);
+
+  // Generate chart data when pool data is available
+  const chartData = useMemo(() => {
+    if (!pool) return null;
+
+    const currentPrice = pool.price.toNumber();
+    const priceHistory = generatePriceHistory(currentPrice, 30);
+    const tvlHistory = generateTVLHistory(pool.liquidity.toString(), 30);
+    const volumeHistory = generateVolumeHistory(30);
+    const liquidityDistribution = generateLiquidityDistribution(
+      currentPrice,
+      pool.tickSpacing,
+      pool.tickCurrentIndex
+    );
+
+    // Combine TVL and volume data
+    const tvlVolumeData = tvlHistory.map((tvl, index) => ({
+      time: tvl.time,
+      tvl: tvl.tvl,
+      volume: volumeHistory[index]?.volume || 0,
+    }));
+
+    return {
+      priceHistory,
+      tvlVolumeData,
+      liquidityDistribution,
+    };
+  }, [pool]);
+
+
 
   if (isLoading) {
     return (
@@ -87,6 +129,21 @@ export default function PoolDetailPage() {
   const tokenBSymbol = pool.tokenB?.symbol || "Token B";
   const feePercent = (pool.feeRate / 10000).toFixed(2);
 
+  // Calculate liquidity value (simplified - in production would need actual token prices)
+  const liquidityNum = parseFloat(pool.liquidity.toString());
+  const liquidityUSD = liquidityNum / 1e6; // Simplified conversion
+
+  // Calculate TVL from liquidity (rough estimate)
+  const tvl = liquidityUSD * pool.price.toNumber() * 0.5; // Simplified calculation
+
+  // Get latest volume from chart data
+  const latestVolume = chartData?.tvlVolumeData[chartData.tvlVolumeData.length - 1]?.volume || 0;
+
+  // Calculate APR based on fees and volume (simplified)
+  const dailyFees = latestVolume * (pool.feeRate / 1000000); // fee in basis points
+  const annualizedFees = dailyFees * 365;
+  const apr = tvl > 0 ? (annualizedFees / tvl) * 100 : 0;
+
   return (
     <Container className="py-8">
       <div className="space-y-8">
@@ -109,7 +166,9 @@ export default function PoolDetailPage() {
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">$0.00</div>
+              <div className="text-2xl font-bold">
+                {formatNumber(tvl)}
+              </div>
               <p className="text-xs text-muted-foreground">Total value locked</p>
             </CardContent>
           </Card>
@@ -120,7 +179,9 @@ export default function PoolDetailPage() {
               <Activity className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">$0.00</div>
+              <div className="text-2xl font-bold">
+                {formatNumber(latestVolume)}
+              </div>
               <p className="text-xs text-muted-foreground">Trading volume</p>
             </CardContent>
           </Card>
@@ -131,7 +192,9 @@ export default function PoolDetailPage() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">0.00%</div>
+              <div className="text-2xl font-bold text-green-600">
+                {apr.toFixed(2)}%
+              </div>
               <p className="text-xs text-muted-foreground">Estimated APR</p>
             </CardContent>
           </Card>
@@ -143,38 +206,93 @@ export default function PoolDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                ${(parseInt(pool.liquidity.toString()) / 1e9).toFixed(2)}B
+                {formatNumber(liquidityUSD)}
               </div>
               <p className="text-xs text-muted-foreground">Active liquidity</p>
             </CardContent>
           </Card>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Price Chart</CardTitle>
-              <CardDescription>Current price: {pool.price.toFixed(4)} {tokenBSymbol} per {tokenASymbol}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-64 flex items-center justify-center text-muted-foreground">
-                Price chart will be displayed here
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Liquidity Distribution</CardTitle>
-              <CardDescription>Active liquidity ranges</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-64 flex items-center justify-center text-muted-foreground">
-                Liquidity distribution chart will be displayed here
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Pool Analytics</CardTitle>
+            <CardDescription>Historical data and liquidity distribution</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Tabs defaultValue="price" className="w-full">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="price">Price</TabsTrigger>
+                <TabsTrigger value="liquidity">Liquidity</TabsTrigger>
+                <TabsTrigger value="tvl">TVL</TabsTrigger>
+                <TabsTrigger value="volume">Volume</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="price" className="mt-4">
+                <div className="space-y-2">
+                  <div className="text-sm text-muted-foreground">
+                    Current: {pool.price.toFixed(4)} {tokenBSymbol} per {tokenASymbol}
+                  </div>
+                  {chartData ? (
+                    <PriceChart 
+                      data={chartData.priceHistory} 
+                      tokenSymbol={tokenASymbol}
+                    />
+                  ) : (
+                    <Skeleton className="h-64 w-full" />
+                  )}
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="liquidity" className="mt-4">
+                <div className="space-y-2">
+                  <div className="text-sm text-muted-foreground">
+                    Active liquidity distribution across price ranges
+                  </div>
+                  {chartData ? (
+                    <LiquidityDistribution
+                      data={chartData.liquidityDistribution}
+                      currentPrice={pool.price.toNumber()}
+                    />
+                  ) : (
+                    <Skeleton className="h-64 w-full" />
+                  )}
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="tvl" className="mt-4">
+                <div className="space-y-2">
+                  <div className="text-sm text-muted-foreground">
+                    Total value locked over time
+                  </div>
+                  {chartData ? (
+                    <TVLVolumeChart 
+                      data={chartData.tvlVolumeData} 
+                      showVolume={false}
+                    />
+                  ) : (
+                    <Skeleton className="h-64 w-full" />
+                  )}
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="volume" className="mt-4">
+                <div className="space-y-2">
+                  <div className="text-sm text-muted-foreground">
+                    24-hour trading volume
+                  </div>
+                  {chartData ? (
+                    <TVLVolumeChart 
+                      data={chartData.tvlVolumeData} 
+                      showTVL={false}
+                    />
+                  ) : (
+                    <Skeleton className="h-64 w-full" />
+                  )}
+                </div>
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

@@ -6,8 +6,8 @@ import { getWhirlpoolClient } from "./orcaClient";
 
 export interface PoolInfo {
   address: PublicKey;
-  tokenA: TokenInfo | undefined;
-  tokenB: TokenInfo | undefined;
+  tokenA: TokenInfo;
+  tokenB: TokenInfo;
   price: Decimal;
   tvl: number;
   feeRate: number;
@@ -16,6 +16,7 @@ export interface PoolInfo {
 }
 
 let tokenList: TokenInfo[] | null = null;
+const tokenCache: Map<string, TokenInfo> = new Map();
 
 async function getTokenList(): Promise<TokenInfo[]> {
   if (!tokenList) {
@@ -24,6 +25,104 @@ async function getTokenList(): Promise<TokenInfo[]> {
     tokenList = tokens.filterByClusterSlug("mainnet-beta").getList();
   }
   return tokenList || [];
+}
+
+// Fetch token metadata directly from the blockchain
+async function fetchTokenMetadata(
+  connection: Connection,
+  mintAddress: string
+): Promise<TokenInfo> {
+  // Check cache first
+  if (tokenCache.has(mintAddress)) {
+    return tokenCache.get(mintAddress)!;
+  }
+
+  try {
+    const mintPubkey = new PublicKey(mintAddress);
+    
+    // First, get the mint info for decimals
+    const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
+    let decimals = 6; // Default decimals
+    
+    if (mintInfo.value && "parsed" in mintInfo.value.data) {
+      const parsedData = mintInfo.value.data.parsed;
+      decimals = parsedData.info.decimals;
+    }
+    
+    // Try to get Metaplex metadata
+    // The metadata PDA is derived from the mint address
+    const METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+    const [metadataPDA] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from('metadata'),
+        METADATA_PROGRAM_ID.toBuffer(),
+        mintPubkey.toBuffer(),
+      ],
+      METADATA_PROGRAM_ID
+    );
+    
+    let symbol = mintAddress.slice(0, 8);
+    let name = `Token ${mintAddress.slice(0, 8)}`;
+    
+    try {
+      const metadataAccount = await connection.getAccountInfo(metadataPDA);
+      if (metadataAccount) {
+        // Parse metadata - this is a simplified version
+        // In production, you'd use @metaplex-foundation/mpl-token-metadata
+        const data = metadataAccount.data;
+        
+        // Skip the discriminator and other fields to get to the name
+        // This is a rough parse - ideally use the Metaplex SDK
+        let offset = 1 + 32 + 32; // discriminator + update auth + mint
+        const nameLength = data.readUInt32LE(offset);
+        offset += 4;
+        const nameBytes = data.slice(offset, offset + nameLength);
+        const tokenName = nameBytes.toString('utf8').replace(/\0/g, '').trim();
+        
+        offset += 32; // max name length
+        const symbolLength = data.readUInt32LE(offset);
+        offset += 4;
+        const symbolBytes = data.slice(offset, offset + symbolLength);
+        const tokenSymbol = symbolBytes.toString('utf8').replace(/\0/g, '').trim();
+        
+        if (tokenName) name = tokenName;
+        if (tokenSymbol) symbol = tokenSymbol;
+      }
+    } catch (metadataError) {
+      console.log(`Could not parse metadata for ${mintAddress}, using defaults`);
+    }
+    
+    const tokenInfo: TokenInfo = {
+      chainId: 101, // Solana mainnet
+      address: mintAddress,
+      symbol: symbol,
+      name: name,
+      decimals: decimals,
+      logoURI: undefined,
+      tags: [],
+      extensions: {}
+    };
+    
+    tokenCache.set(mintAddress, tokenInfo);
+    return tokenInfo;
+  } catch (error) {
+    console.error(`Error fetching metadata for ${mintAddress}:`, error);
+  }
+  
+  // Fallback token info
+  const fallbackToken: TokenInfo = {
+    chainId: 101,
+    address: mintAddress,
+    symbol: mintAddress.slice(0, 8),
+    name: `Token ${mintAddress.slice(0, 8)}`,
+    decimals: 6, // Default to 6 decimals
+    logoURI: undefined,
+    tags: [],
+    extensions: {}
+  };
+  
+  tokenCache.set(mintAddress, fallbackToken);
+  return fallbackToken;
 }
 
 export async function fetchUserPositions(
@@ -82,28 +181,41 @@ export async function fetchPoolsWithDetails(
     const client = getWhirlpoolClient(connection);
     const whirlpools = await client.program.account.whirlpool.all();
     const tokens = await getTokenList();
-
+    
     const poolsWithDetails = await Promise.all(
       whirlpools.slice(0, limit).map(async (pool) => {
         try {
           const poolData = pool.account;
-          const tokenA = tokens.find(
-            (t) => t.address === poolData.tokenMintA.toString()
+          
+          // Debug logging
+          const tokenMintAStr = poolData.tokenMintA.toString();
+          const tokenMintBStr = poolData.tokenMintB.toString();
+          
+          let tokenA = tokens.find(
+            (t) => t.address === tokenMintAStr
           );
-          const tokenB = tokens.find(
-            (t) => t.address === poolData.tokenMintB.toString()
+          let tokenB = tokens.find(
+            (t) => t.address === tokenMintBStr
           );
+          
+          // If tokens are not found in registry, fetch metadata from blockchain
+          if (!tokenA) {
+            tokenA = await fetchTokenMetadata(connection, tokenMintAStr);
+          }
+          if (!tokenB) {
+            tokenB = await fetchTokenMetadata(connection, tokenMintBStr);
+          }
 
           const price = PriceMath.sqrtPriceX64ToPrice(
             poolData.sqrtPrice,
-            tokenA?.decimals || 6,
-            tokenB?.decimals || 6
+            tokenA.decimals,
+            tokenB.decimals
           );
 
           return {
             address: pool.publicKey,
-            tokenA,
-            tokenB,
+            tokenA: tokenA,
+            tokenB: tokenB,
             price,
             tvl: 0,
             feeRate: poolData.feeRate,
@@ -111,6 +223,7 @@ export async function fetchPoolsWithDetails(
             liquidity: poolData.liquidity.toString(),
           };
         } catch (error) {
+          console.error(`Error processing pool ${pool.publicKey.toString()}:`, error);
           return null;
         }
       })
@@ -136,17 +249,28 @@ export async function fetchPoolDetails(
     }
 
     const tokens = await getTokenList();
-    const tokenA = tokens.find(
-      (t) => t.address === pool.tokenMintA.toString()
+    const tokenMintAStr = pool.tokenMintA.toString();
+    const tokenMintBStr = pool.tokenMintB.toString();
+    
+    let tokenA = tokens.find(
+      (t) => t.address === tokenMintAStr
     );
-    const tokenB = tokens.find(
-      (t) => t.address === pool.tokenMintB.toString()
+    let tokenB = tokens.find(
+      (t) => t.address === tokenMintBStr
     );
+    
+    // If tokens are not found in registry, fetch metadata from blockchain
+    if (!tokenA) {
+      tokenA = await fetchTokenMetadata(connection, tokenMintAStr);
+    }
+    if (!tokenB) {
+      tokenB = await fetchTokenMetadata(connection, tokenMintBStr);
+    }
 
     const price = PriceMath.sqrtPriceX64ToPrice(
       pool.sqrtPrice,
-      tokenA?.decimals || 6,
-      tokenB?.decimals || 6
+      tokenA.decimals,
+      tokenB.decimals
     );
 
     return {

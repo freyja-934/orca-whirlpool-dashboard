@@ -1,58 +1,80 @@
 @import "tailwindcss";
 
-@layer base {
+/* Custom CSS variables for theme colors */
+:root {
+  --background: #ffffff;
+  --foreground: #020817;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --card: #ffffff;
+  --card-foreground: #020817;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --primary: #5b8def;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #1e293b;
+  --accent: #f1f5f9;
+  --accent-foreground: #1e293b;
+  --destructive: #ef4444;
+  --destructive-foreground: #fafafa;
+  --ring: #5b8def;
+}
+
+@media (prefers-color-scheme: dark) {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --primary: 231 91% 63%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --ring: 231 91% 63%;
-    --radius: 0.5rem;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 0 0% 95%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 0 0% 95%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 0 0% 95%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --primary: 231 91% 63%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 0 0% 95%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 0 0% 95%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --ring: 231 91% 63%;
+    --background: #020817;
+    --foreground: #f1f5f9;
+    --muted: #1e293b;
+    --muted-foreground: #94a3b8;
+    --card: #020817;
+    --card-foreground: #f1f5f9;
+    --border: #1e293b;
+    --input: #1e293b;
+    --primary: #5b8def;
+    --primary-foreground: #020817;
+    --secondary: #1e293b;
+    --secondary-foreground: #f1f5f9;
+    --accent: #1e293b;
+    --accent-foreground: #f1f5f9;
+    --destructive: #ef4444;
+    --destructive-foreground: #fafafa;
+    --ring: #5b8def;
   }
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
-  }
+/* Base styles */
+* {
+  border-color: var(--border);
 }
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+/* Utility classes for colors */
+.bg-background { background-color: var(--background); }
+.bg-foreground { background-color: var(--foreground); }
+.bg-muted { background-color: var(--muted); }
+.bg-card { background-color: var(--card); }
+.bg-primary { background-color: var(--primary); }
+.bg-secondary { background-color: var(--secondary); }
+.bg-accent { background-color: var(--accent); }
+.bg-destructive { background-color: var(--destructive); }
+
+.text-foreground { color: var(--foreground); }
+.text-muted-foreground { color: var(--muted-foreground); }
+.text-card-foreground { color: var(--card-foreground); }
+.text-primary { color: var(--primary); }
+.text-primary-foreground { color: var(--primary-foreground); }
+.text-secondary-foreground { color: var(--secondary-foreground); }
+.text-accent-foreground { color: var(--accent-foreground); }
+.text-destructive-foreground { color: var(--destructive-foreground); }
+
+.border-border { border-color: var(--border); }
+.border-input { border-color: var(--input); }
+
+.ring-ring { --tw-ring-color: var(--ring); }
+.ring-offset-background { --tw-ring-offset-color: var(--background); }
