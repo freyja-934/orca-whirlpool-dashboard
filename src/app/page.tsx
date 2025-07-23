@@ -7,6 +7,9 @@ import Link from "next/link";
 export default function HomePage() {
   return (
     <Container className="py-8 sm:py-12 lg:py-16">
+      {/* Force Tailwind to generate bg-primary */}
+      <div className="hidden bg-primary bg-primary/90"></div>
+      
       <div className="mx-auto max-w-4xl space-y-8 sm:space-y-12">
         <div className="text-center space-y-4">
           <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">

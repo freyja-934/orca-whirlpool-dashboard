@@ -10,7 +10,6 @@ import { useState } from "react";
 const navItems = [
   { name: "Dashboard", href: "/dashboard" },
   { name: "Explore", href: "/explore" },
-  { name: "Rebalance", href: "/rebalance" },
 ];
 
 export function Navigation() {

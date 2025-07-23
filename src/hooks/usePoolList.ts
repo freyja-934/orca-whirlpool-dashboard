@@ -19,43 +19,69 @@ export function usePoolList(filters?: { search?: string; sortBy?: string }) {
     staleTime: 60000,
     gcTime: 5 * 60 * 1000,
   });
-console.log(query.data)
+
   const filteredPools = useMemo(() => {
     if (!query.data) return [];
     
     let pools = [...query.data];
 
-    if (filters?.search) {
-      const searchLower = filters.search.toLowerCase();
+    // Apply search filter
+    if (filters?.search && filters.search.trim() !== '') {
+      const searchLower = filters.search.toLowerCase().trim();
       pools = pools.filter((pool) => {
-        const tokenAMatch = pool.tokenA?.symbol?.toLowerCase().includes(searchLower) || 
-                           pool.tokenA?.name?.toLowerCase().includes(searchLower);
-        const tokenBMatch = pool.tokenB?.symbol?.toLowerCase().includes(searchLower) || 
-                           pool.tokenB?.name?.toLowerCase().includes(searchLower);
-        return tokenAMatch || tokenBMatch;
+        // Check if either token symbol contains the search query
+        const tokenASymbol = pool.tokenA?.symbol?.toLowerCase() || '';
+        const tokenBSymbol = pool.tokenB?.symbol?.toLowerCase() || '';
+        const tokenAName = pool.tokenA?.name?.toLowerCase() || '';
+        const tokenBName = pool.tokenB?.name?.toLowerCase() || '';
+        
+        // Search in symbol or name
+        const matchesTokenA = tokenASymbol.includes(searchLower) || tokenAName.includes(searchLower);
+        const matchesTokenB = tokenBSymbol.includes(searchLower) || tokenBName.includes(searchLower);
+        
+        // Also check if the search term matches the pair (e.g., "SOL/USDC")
+        const pairSymbol = `${tokenASymbol}/${tokenBSymbol}`;
+        const matchesPair = pairSymbol.includes(searchLower);
+        
+        return matchesTokenA || matchesTokenB || matchesPair;
       });
     }
 
+    // Apply sorting
     if (filters?.sortBy) {
       switch (filters.sortBy) {
         case "tvl":
-          pools.sort((a, b) => b.tvl - a.tvl);
+          pools.sort((a, b) => (b.tvl || 0) - (a.tvl || 0));
           break;
         case "feeRate":
           pools.sort((a, b) => b.feeRate - a.feeRate);
           break;
         case "liquidity":
           pools.sort((a, b) => {
-            const aLiq = BigInt(a.liquidity);
-            const bLiq = BigInt(b.liquidity);
+            const aLiq = BigInt(a.liquidity || 0);
+            const bLiq = BigInt(b.liquidity || 0);
             return aLiq > bLiq ? -1 : aLiq < bLiq ? 1 : 0;
           });
           break;
+        case "volume":
+          pools.sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
+          break;
+        default:
+          // Default to TVL sorting
+          pools.sort((a, b) => (b.tvl || 0) - (a.tvl || 0));
       }
+    } else {
+      // Default sort by TVL if no sort specified
+      pools.sort((a, b) => (b.tvl || 0) - (a.tvl || 0));
     }
 
     return pools;
   }, [query.data, filters]);
+
+  // Reset page when filters change
+  useMemo(() => {
+    setPage(1);
+  }, [filters]);
 
   const paginatedPools = useMemo(() => {
     const startIndex = (page - 1) * POOLS_PER_PAGE;
@@ -68,6 +94,7 @@ console.log(query.data)
   return {
     pools: paginatedPools,
     allPools: filteredPools,
+    totalPools: filteredPools.length,
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,
